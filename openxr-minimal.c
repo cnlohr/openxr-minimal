@@ -38,8 +38,9 @@
 #ifndef GL_MAJOR_VERSION
 #define GL_MAJOR_VERSION   0x821B
 #define GL_MINOR_VERSION   0x821C
-#define GL_FRAMEBUFFER     0x8D40
+#define GL_FRAMEBUFFER	 0x8D40
 #define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_DEPTH_ATTACHMENT  0x8D00
 #define GL_DEPTH_COMPONENT16 0x81A5
 #define GL_DEPTH_COMPONENT24 0x81A6
 #endif
@@ -89,6 +90,10 @@ struct SwapchainInfo * swapchains;
 XrSwapchainImageOpenGLKHR ** swapchainImages;
 uint32_t * swapchainLengths;
 
+struct RenderInfo
+{
+	GLuint program;
+} renderInfo;
 
 // For debugging.
 int printAll = 1;
@@ -789,66 +794,66 @@ int CreateSwapchains(XrInstance instance, XrSession session,
 
 int BeginSession(XrInstance instance, XrSystemId systemId, XrSession session)
 {
-    XrResult result;
-    XrViewConfigurationType stereoViewConfigType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-    XrSessionBeginInfo sbi;
-    sbi.type = XR_TYPE_SESSION_BEGIN_INFO;
-    sbi.next = NULL;
-    sbi.primaryViewConfigurationType = stereoViewConfigType;
+	XrResult result;
+	XrViewConfigurationType stereoViewConfigType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	XrSessionBeginInfo sbi;
+	sbi.type = XR_TYPE_SESSION_BEGIN_INFO;
+	sbi.next = NULL;
+	sbi.primaryViewConfigurationType = stereoViewConfigType;
 
-    result = xrBeginSession(session, &sbi);
-    if (!CheckResult(instance, result, "xrBeginSession"))
-    {
-        return 0;
-    }
+	result = xrBeginSession(session, &sbi);
+	if (!CheckResult(instance, result, "xrBeginSession"))
+	{
+		return 0;
+	}
 
-    return 1;
+	return 1;
 }
 
 
 int SyncInput(XrInstance instance, XrSession session, XrActionSet actionSet)
 {
-    XrResult result;
+	XrResult result;
 
-    // syncInput
-    XrActiveActionSet aas;
-    aas.actionSet = actionSet;
-    aas.subactionPath = XR_NULL_PATH;
-    XrActionsSyncInfo asi;
-    asi.type = XR_TYPE_ACTIONS_SYNC_INFO;
-    asi.next = NULL;
-    asi.countActiveActionSets = 1;
-    asi.activeActionSets = &aas;
-    result = xrSyncActions(session, &asi);
-    if (!CheckResult(instance, result, "xrSyncActions"))
-    {
-        return 0;
-    }
+	// syncInput
+	XrActiveActionSet aas;
+	aas.actionSet = actionSet;
+	aas.subactionPath = XR_NULL_PATH;
+	XrActionsSyncInfo asi;
+	asi.type = XR_TYPE_ACTIONS_SYNC_INFO;
+	asi.next = NULL;
+	asi.countActiveActionSets = 1;
+	asi.activeActionSets = &aas;
+	result = xrSyncActions(session, &asi);
+	if (!CheckResult(instance, result, "xrSyncActions"))
+	{
+		return 0;
+	}
 
 	// Todo's from original author.
-    // AJT: TODO: xrGetActionStateFloat()
-    // AJT: TODO: xrGetActionStatePose()
+	// AJT: TODO: xrGetActionStateFloat()
+	// AJT: TODO: xrGetActionStatePose()
 
-    return 1;
+	return 1;
 }
 
 
 uint32_t CreateDepthTexture(uint32_t colorTexture)
 {
-    uint32_t width, height;
-    glBindTexture(GL_TEXTURE_2D, colorTexture);
-    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
-    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+	uint32_t width, height;
+	glBindTexture(GL_TEXTURE_2D, colorTexture);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
 
-    uint32_t depthTexture;
-    glGenTextures(1, &depthTexture);
-    glBindTexture(GL_TEXTURE_2D, depthTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0 );
-    return depthTexture;
+	uint32_t depthTexture;
+	glGenTextures(1, &depthTexture);
+	glBindTexture(GL_TEXTURE_2D, depthTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0 );
+	return depthTexture;
 }
 
 uint32_t GetDepthTextureFromColorTexture( uint32_t tex )
@@ -864,97 +869,231 @@ uint32_t GetDepthTextureFromColorTexture( uint32_t tex )
 	return colorDepthPairs[numColorDepthPairs*2+1] = CreateDepthTexture( tex );
 }
 
-int RenderLayer(XrInstance instance, XrSession session, XrViewConfigurationView * viewConfigs, int viewConfigsCount,
-                 XrSpace stageSpace, struct SwapchainInfo * swapchains,
-                 XrSwapchainImageOpenGLKHR ** swapchainImages, uint32_t * swapchainLengths,
-                 GLuint * colorToDepthMap, GLuint frameBuffer,
-                 XrTime predictedDisplayTime,
-                 XrCompositionLayerProjection * layer)
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static void InitPoseMat(float* result, const XrPosef * pose)
 {
-    XrViewState viewState;
-    viewState.type = XR_TYPE_VIEW_STATE;
-    viewState.next = NULL;
+    const float x2  = pose->orientation.x + pose->orientation.x;
+    const float y2  = pose->orientation.y + pose->orientation.y;
+    const float z2  = pose->orientation.z + pose->orientation.z;
 
-    uint32_t viewCapacityInput = viewConfigsCount;
-    uint32_t viewCountOutput;
+    const float xx2 = pose->orientation.x * x2;
+    const float yy2 = pose->orientation.y * y2;
+    const float zz2 = pose->orientation.z * z2;
 
-    XrView views[viewConfigsCount];
-    for (size_t i = 0; i < viewConfigsCount; i++)
-    {
-        views[i].type = XR_TYPE_VIEW;
-        views[i].next = NULL;
-    }
+    const float yz2 = pose->orientation.y * z2;
+    const float wx2 = pose->orientation.w * x2;
+    const float xy2 = pose->orientation.x * y2;
+    const float wz2 = pose->orientation.w * z2;
+    const float xz2 = pose->orientation.x * z2;
+    const float wy2 = pose->orientation.w * y2;
 
-    XrViewLocateInfo vli;
-    vli.type = XR_TYPE_VIEW_LOCATE_INFO;
-    vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-    vli.displayTime = predictedDisplayTime;
-    vli.space = stageSpace;
-    XrResult result = xrLocateViews( session, &vli, &viewState, viewCapacityInput, &viewCountOutput, views );
-    if (!CheckResult(instance, result, "xrLocateViews"))
-    {
-        return 0;
-    }
+    result[0] = 1.0f - yy2 - zz2;
+    result[1] = xy2 + wz2;
+    result[2] = xz2 - wy2;
+    result[3] = 0.0f;
+
+    result[4] = xy2 - wz2;
+    result[5] = 1.0f - xx2 - zz2;
+    result[6] = yz2 + wx2;
+    result[7] = 0.0f;
+
+    result[8] = xz2 + wy2;
+    result[9] = yz2 - wx2;
+    result[10] = 1.0f - xx2 - yy2;
+    result[11] = 0.0f;
+
+    result[12] = pose->position.x;
+    result[13] = pose->position.y;
+    result[14] = pose->position.z;
+    result[15] = 1.0;
+}
+
+static void MultiplyMat(float* result, const float* a, const float* b)
+{
+    result[0] = a[0] * b[0] + a[4] * b[1] + a[8] * b[2] + a[12] * b[3];
+    result[1] = a[1] * b[0] + a[5] * b[1] + a[9] * b[2] + a[13] * b[3];
+    result[2] = a[2] * b[0] + a[6] * b[1] + a[10] * b[2] + a[14] * b[3];
+    result[3] = a[3] * b[0] + a[7] * b[1] + a[11] * b[2] + a[15] * b[3];
+
+    result[4] = a[0] * b[4] + a[4] * b[5] + a[8] * b[6] + a[12] * b[7];
+    result[5] = a[1] * b[4] + a[5] * b[5] + a[9] * b[6] + a[13] * b[7];
+    result[6] = a[2] * b[4] + a[6] * b[5] + a[10] * b[6] + a[14] * b[7];
+    result[7] = a[3] * b[4] + a[7] * b[5] + a[11] * b[6] + a[15] * b[7];
+
+    result[8] = a[0] * b[8] + a[4] * b[9] + a[8] * b[10] + a[12] * b[11];
+    result[9] = a[1] * b[8] + a[5] * b[9] + a[9] * b[10] + a[13] * b[11];
+    result[10] = a[2] * b[8] + a[6] * b[9] + a[10] * b[10] + a[14] * b[11];
+    result[11] = a[3] * b[8] + a[7] * b[9] + a[11] * b[10] + a[15] * b[11];
+
+    result[12] = a[0] * b[12] + a[4] * b[13] + a[8] * b[14] + a[12] * b[15];
+    result[13] = a[1] * b[12] + a[5] * b[13] + a[9] * b[14] + a[13] * b[15];
+    result[14] = a[2] * b[12] + a[6] * b[13] + a[10] * b[14] + a[14] * b[15];
+    result[15] = a[3] * b[12] + a[7] * b[13] + a[11] * b[14] + a[15] * b[15];
+}
+
+static void InvertOrthogonalMat(float* result, float* src)
+{
+    result[0] = src[0];
+    result[1] = src[4];
+    result[2] = src[8];
+    result[3] = 0.0f;
+    result[4] = src[1];
+    result[5] = src[5];
+    result[6] = src[9];
+    result[7] = 0.0f;
+    result[8] = src[2];
+    result[9] = src[6];
+    result[10] = src[10];
+    result[11] = 0.0f;
+    result[12] = -(src[0] * src[12] + src[1] * src[13] + src[2] * src[14]);
+    result[13] = -(src[4] * src[12] + src[5] * src[13] + src[6] * src[14]);
+    result[14] = -(src[8] * src[12] + src[9] * src[13] + src[10] * src[14]);
+    result[15] = 1.0f;
+}
+
+enum GraphicsAPI { GRAPHICS_VULKAN, GRAPHICS_OPENGL, GRAPHICS_OPENGL_ES, GRAPHICS_D3D };
+static void InitProjectionMat(float* result, enum GraphicsAPI graphicsApi, const float tanAngleLeft,
+							  const float tanAngleRight, const float tanAngleUp, float const tanAngleDown,
+							  const float nearZ, const float farZ)
+{
+	const float tanAngleWidth = tanAngleRight - tanAngleLeft;
+
+	// Set to tanAngleDown - tanAngleUp for a clip space with positive Y down (Vulkan).
+	// Set to tanAngleUp - tanAngleDown for a clip space with positive Y up (OpenGL / D3D / Metal).
+	const float tanAngleHeight = graphicsApi == GRAPHICS_VULKAN ? (tanAngleDown - tanAngleUp) : (tanAngleUp - tanAngleDown);
+
+	// Set to nearZ for a [-1,1] Z clip space (OpenGL / OpenGL ES).
+	// Set to zero for a [0,1] Z clip space (Vulkan / D3D / Metal).
+	const float offsetZ = (graphicsApi == GRAPHICS_OPENGL || graphicsApi == GRAPHICS_OPENGL_ES) ? nearZ : 0;
+
+	if (farZ <= nearZ)
+	{
+		// place the far plane at infinity
+		result[0] = 2 / tanAngleWidth;
+		result[4] = 0;
+		result[8] = (tanAngleRight + tanAngleLeft) / tanAngleWidth;
+		result[12] = 0;
+
+		result[1] = 0;
+		result[5] = 2 / tanAngleHeight;
+		result[9] = (tanAngleUp + tanAngleDown) / tanAngleHeight;
+		result[13] = 0;
+
+		result[2] = 0;
+		result[6] = 0;
+		result[10] = -1;
+		result[14] = -(nearZ + offsetZ);
+
+		result[3] = 0;
+		result[7] = 0;
+		result[11] = -1;
+		result[15] = 0;
+	}
+	else
+	{
+		// normal projection
+		result[0] = 2 / tanAngleWidth;
+		result[4] = 0;
+		result[8] = (tanAngleRight + tanAngleLeft) / tanAngleWidth;
+		result[12] = 0;
+
+		result[1] = 0;
+		result[5] = 2 / tanAngleHeight;
+		result[9] = (tanAngleUp + tanAngleDown) / tanAngleHeight;
+		result[13] = 0;
+
+		result[2] = 0;
+		result[6] = 0;
+		result[10] = -(farZ + offsetZ) / (farZ - nearZ);
+		result[14] = -(farZ * (nearZ + offsetZ)) / (farZ - nearZ);
+
+		result[3] = 0;
+		result[7] = 0;
+		result[11] = -1;
+		result[15] = 0;
+	}
+}
+
+
+int RenderLayer(XrInstance instance, XrSession session, XrViewConfigurationView * viewConfigs, int viewConfigsCount,
+				 XrSpace stageSpace, struct SwapchainInfo * swapchains,
+				 XrSwapchainImageOpenGLKHR ** swapchainImages, uint32_t * swapchainLengths,
+				 GLuint * colorToDepthMap, GLuint frameBuffer,
+				 XrTime predictedDisplayTime,
+				 XrCompositionLayerProjection * layer)
+{
+	XrViewState viewState;
+	viewState.type = XR_TYPE_VIEW_STATE;
+	viewState.next = NULL;
+
+	uint32_t viewCapacityInput = viewConfigsCount;
+	uint32_t viewCountOutput;
+
+	XrView views[viewConfigsCount];
+	for (size_t i = 0; i < viewConfigsCount; i++)
+	{
+		views[i].type = XR_TYPE_VIEW;
+		views[i].next = NULL;
+	}
+
+	XrViewLocateInfo vli;
+	vli.type = XR_TYPE_VIEW_LOCATE_INFO;
+	vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	vli.displayTime = predictedDisplayTime;
+	vli.space = stageSpace;
+	XrResult result = xrLocateViews( session, &vli, &viewState, viewCapacityInput, &viewCountOutput, views );
+	if (!CheckResult(instance, result, "xrLocateViews"))
+	{
+		return 0;
+	}
 	
-    XrCompositionLayerProjectionView projectionLayerViews[viewCountOutput];
+	XrCompositionLayerProjectionView projectionLayerViews[viewCountOutput];
 	memset( projectionLayerViews, 0, sizeof( XrCompositionLayerProjectionView ) * viewCountOutput );
 
 	for (uint32_t i = 0; i < viewConfigsCount; i++)
 		for (uint32_t j = 0; j < swapchainLengths[i]; j++)
 		{
 			const XrSwapchainImageOpenGLKHR * swapchainImage = &swapchainImages[i][j];
-			printf( "-----> [%d %d] %d %p\n", i, j, 0, swapchainImage  );
+			// ??? Need to do this?
 		}
 
-    if (XR_UNQUALIFIED_SUCCESS(result))
-    {
-        // Render view to the appropriate part of the swapchain image.
-        for (uint32_t i = 0; i < viewCountOutput; i++)
-        {
-            // Each view has a separate swapchain which is acquired, rendered to, and released.
-            const struct SwapchainInfo * viewSwapchain = swapchains + i;
+	if (XR_UNQUALIFIED_SUCCESS(result))
+	{
+		// Render view to the appropriate part of the swapchain image.
+		for (uint32_t i = 0; i < viewCountOutput; i++)
+		{
+			// Each view has a separate swapchain which is acquired, rendered to, and released.
+			const struct SwapchainInfo * viewSwapchain = swapchains + i;
 
-            XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
-            uint32_t swapchainImageIndex;
-            result = xrAcquireSwapchainImage(viewSwapchain->handle, &ai, &swapchainImageIndex);
-            if (!CheckResult(instance, result, "xrAquireSwapchainImage"))
-            {
-                return 0;
-            }
+			XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+			uint32_t swapchainImageIndex;
+			result = xrAcquireSwapchainImage(viewSwapchain->handle, &ai, &swapchainImageIndex);
+			if (!CheckResult(instance, result, "xrAquireSwapchainImage"))
+			{
+				return 0;
+			}
 
-            XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
-            wi.timeout = XR_INFINITE_DURATION;
-            result = xrWaitSwapchainImage(viewSwapchain->handle, &wi);
-            if (!CheckResult(instance, result, "xrWaitSwapchainImage"))
-            {
-                return 0;
-            }
+			XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+			wi.timeout = XR_INFINITE_DURATION;
+			result = xrWaitSwapchainImage(viewSwapchain->handle, &wi);
+			if (!CheckResult(instance, result, "xrWaitSwapchainImage"))
+			{
+				return 0;
+			}
 			
 			XrCompositionLayerProjectionView * layerView = projectionLayerViews + i;
 
-            layerView->type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-            layerView->pose = views[i].pose;
-            layerView->fov = views[i].fov;
-            layerView->subImage.swapchain = viewSwapchain->handle;
-            layerView->subImage.imageRect.offset.x = 0;
-            layerView->subImage.imageRect.offset.y = 0;
-            layerView->subImage.imageRect.extent.width = viewSwapchain->width;
-            layerView->subImage.imageRect.extent.height = viewSwapchain->height;
-			printf( "%d %d %d [%f %f %f %f]\n", viewSwapchain->width, viewSwapchain->height, swapchainImageIndex,
-				layerView->fov.angleLeft, layerView->fov.angleRight, layerView->fov.angleUp, layerView->fov.angleDown );
-            const XrSwapchainImageOpenGLKHR * swapchainImage = &swapchainImages[i][swapchainImageIndex];
+			layerView->type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+			layerView->pose = views[i].pose;
+			layerView->fov = views[i].fov;
+			layerView->subImage.swapchain = viewSwapchain->handle;
+			layerView->subImage.imageRect.offset.x = 0;
+			layerView->subImage.imageRect.offset.y = 0;
+			layerView->subImage.imageRect.extent.width = viewSwapchain->width;
+			layerView->subImage.imageRect.extent.height = viewSwapchain->height;
 
-            // find or create the depthTexture associated with this colorTexture
-            //const uint32_t colorTexture = swapchainImage.image;
-            //auto iter = colorToDepthMap.find(colorTexture);
-            //if (iter == colorToDepthMap.end())
-            //{
-            //    const uint32_t depthTexture = CreateDepthTexture(colorTexture);
-            //    iter = colorToDepthMap.insert(std::make_pair(colorTexture, depthTexture)).first;
-            //}
-			//
-            //RenderView(programInfo, projectionLayerViews[i], frameBuffer, iter->first, iter->second);
-			// Render stuff...
+			const XrSwapchainImageOpenGLKHR * swapchainImage = &swapchainImages[i][swapchainImageIndex];
 
 			uint32_t colorTexture = swapchainImage->image;
 			uint32_t depthTexture = GetDepthTextureFromColorTexture( colorTexture );
@@ -967,93 +1106,120 @@ int RenderLayer(XrInstance instance, XrSession session, XrViewConfigurationView 
 					   layerView->subImage.imageRect.extent.height);
 
 			minXRglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
-			//minXRglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTexture, 0);
+			minXRglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTexture, 0);
 
-			glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+			glClearColor(0.0f, 0.1f, 0.0f, 1.0f);
 			glClearDepth(1.0f);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
+			// Render Pipeline copied from https://github.com/hyperlogic/openxrstub/blob/main/src/main.cpp
+
+			// convert XrFovf into an OpenGL projection matrix.
+			const float tanLeft = tan(layerView->fov.angleLeft);
+			const float tanRight = tan(layerView->fov.angleRight);
+			const float tanDown = tan(layerView->fov.angleDown);
+			const float tanUp = tan(layerView->fov.angleUp);
+			const float nearZ = 0.05f;
+			const float farZ = 100.0f;
+			float projMat[16];
+			InitProjectionMat(projMat, GRAPHICS_OPENGL, tanLeft, tanRight, tanUp, tanDown, nearZ, farZ);
+
+			// compute view matrix by inverting the pose
+			float invViewMat[16];
+			InitPoseMat(invViewMat, &layerView->pose);
+			float viewMat[16];
+			InvertOrthogonalMat(viewMat, invViewMat);
+
+			float modelViewProjMat[16];
+			MultiplyMat(modelViewProjMat, projMat, viewMat);
+
+			glUseProgram(programInfo.program);
+			glUniformMatrix4fv(programInfo.modelViewProjMatUniformLoc, 1, GL_FALSE, modelViewProjMat);
+			float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+			glUniform4fv(programInfo.colorUniformLoc, 1, green);
+
+
 			minXRglBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-            XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-            result = xrReleaseSwapchainImage( viewSwapchain->handle, &ri );
-            if (!CheckResult(instance, result, "xrReleaseSwapchainImage"))
-            {
-                return 0;
-            }
-        }
+			XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+			result = xrReleaseSwapchainImage( viewSwapchain->handle, &ri );
+			if (!CheckResult(instance, result, "xrReleaseSwapchainImage"))
+			{
+				return 0;
+			}
+		}
 
 		layer->viewCount = viewCountOutput;
 		layer->views = projectionLayerViews;
-    }
+	}
 
-    return 1;
+	return 1;
 }
 
 int RenderFrame(XrInstance instance, XrSession session, XrViewConfigurationView * viewConfigs, int viewConfigsCount,
-                 XrSpace stageSpace, struct SwapchainInfo * swapchains,
-                 XrSwapchainImageOpenGLKHR ** swapchainImages, uint32_t * swapchainLengths,
-                 GLuint * colorToDepthMap, int numColorDepthPairs, GLuint frameBuffer )
+				 XrSpace stageSpace, struct SwapchainInfo * swapchains,
+				 XrSwapchainImageOpenGLKHR ** swapchainImages, uint32_t * swapchainLengths,
+				 GLuint * colorToDepthMap, int numColorDepthPairs, GLuint frameBuffer )
 {
-    XrFrameState fs;
-    fs.type = XR_TYPE_FRAME_STATE;
-    fs.next = NULL;
+	XrFrameState fs;
+	fs.type = XR_TYPE_FRAME_STATE;
+	fs.next = NULL;
 
-    XrFrameWaitInfo fwi;
-    fwi.type = XR_TYPE_FRAME_WAIT_INFO;
-    fwi.next = NULL;
+	XrFrameWaitInfo fwi;
+	fwi.type = XR_TYPE_FRAME_WAIT_INFO;
+	fwi.next = NULL;
 
-    XrResult result = xrWaitFrame(session, &fwi, &fs);
-    if (!CheckResult(instance, result, "xrWaitFrame"))
-    {
-        return 0;
-    }
+	XrResult result = xrWaitFrame(session, &fwi, &fs);
+	if (!CheckResult(instance, result, "xrWaitFrame"))
+	{
+		return 0;
+	}
 
-    XrFrameBeginInfo fbi;
-    fbi.type = XR_TYPE_FRAME_BEGIN_INFO;
-    fbi.next = NULL;
-    result = xrBeginFrame(session, &fbi);
-    if (!CheckResult(instance, result, "xrBeginFrame"))
-    {
-        return 0;
-    }
+	XrFrameBeginInfo fbi;
+	fbi.type = XR_TYPE_FRAME_BEGIN_INFO;
+	fbi.next = NULL;
+	result = xrBeginFrame(session, &fbi);
+	if (!CheckResult(instance, result, "xrBeginFrame"))
+	{
+		return 0;
+	}
 
 	int layerCount = 0;
-    XrCompositionLayerProjection layer;
-    XrCompositionLayerBaseHeader * layers[1] = { &layer };
+	XrCompositionLayerProjection layer;
+	XrCompositionLayerBaseHeader * layers[1] = { &layer };
 	layer.layerFlags = 0; //XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-    layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
-    layer.next = NULL;
+	layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
+	layer.next = NULL;
 	layer.space = stageSpace;
 
-    if (fs.shouldRender == XR_TRUE)
-    {
-        if (RenderLayer(instance, session, viewConfigs, viewConfigsCount,
+	if (fs.shouldRender == XR_TRUE)
+	{
+		if (RenderLayer(instance, session, viewConfigs, viewConfigsCount,
 						stageSpace,
 						swapchains,
 						swapchainImages,
 						swapchainLengths,
 						colorToDepthMap,
-                        frameBuffer, fs.predictedDisplayTime, &layer))
-        {
+						frameBuffer, fs.predictedDisplayTime, &layer))
+		{
 			layerCount++;
-        }
-    }
+		}
+	}
 
-    XrFrameEndInfo fei = { 0 };
-    fei.type = XR_TYPE_FRAME_END_INFO;
-    fei.displayTime = fs.predictedDisplayTime;
-    fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    fei.layerCount = layerCount;
-    fei.layers = layers;
+	XrFrameEndInfo fei = { 0 };
+	fei.type = XR_TYPE_FRAME_END_INFO;
+	fei.displayTime = fs.predictedDisplayTime;
+	fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	fei.layerCount = layerCount;
+	fei.layers = layers;
 
-    result = xrEndFrame(session, &fei);
-    if (!CheckResult(instance, result, "xrEndFrame"))
-    {
-        return 0;
-    }
+	result = xrEndFrame(session, &fei);
+	if (!CheckResult(instance, result, "xrEndFrame"))
+	{
+		return 0;
+	}
 
-    return 1;
+	return 1;
 }
 
 int main()
@@ -1070,6 +1236,18 @@ int main()
 
 	CNFGSetup( "Example App", 1024, 768 );
 	EnumOpenGLExtensions();
+	
+	renderInfo.program = CNFGGLInternalLoadShader( 
+		"uniform vec4 xfrm;"
+		"attribute vec3 a0;"
+		"attribute vec4 a1;"
+		"varying vec4 vc;"
+		"void main() { gl_Position = vec4( a0.xy*xfrm.xy+xfrm.zw, a0.z, 0.5 ); vc = a1; }",
+
+		"varying vec4 vc;"
+		"void main() { gl_FragColor = vec4(vc.rgba); }" 
+		 );
+
 
 	if ( !CreateSession(instance, systemId, &session ) ) return -1;
 	if ( !CreateActions(instance, systemId, session, &actionSet ) ) return -1;
@@ -1077,8 +1255,8 @@ int main()
 
 	minXRglGenFramebuffers(1, &frameBuffer);
 	
-    if (!CreateSwapchains(instance, session, viewConfigs, numViewConfigs,
-                          &swapchains, &swapchainImages, &swapchainLengths )) return -1;
+	if (!CreateSwapchains(instance, session, viewConfigs, numViewConfigs,
+						  &swapchains, &swapchainImages, &swapchainLengths )) return -1;
 	
 	// numColorDepthPairs * 2 
 	//GLuint * colorDepthPairs;

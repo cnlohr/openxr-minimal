@@ -1,6 +1,11 @@
 // Minimal C OpenXR implementation (based on https://github.com/hyperlogic/openxrstub/blob/main/src/main.cpp)
 // Adapted for use on all major platforms.
+//
 // No reliance on any libraries.
+//
+// Tested + working on SteamVR. See https://github.com/cnlohr/tsopenxr for more interesting examples.
+//
+// VERY SIMPLE, just presents green frames to the display.
 // 
 // That portion is: 
 //	Copyright (c) 2020 Anthony J. Thibault
@@ -89,11 +94,6 @@ struct SwapchainInfo
 struct SwapchainInfo * swapchains;
 XrSwapchainImageOpenGLKHR ** swapchainImages;
 uint32_t * swapchainLengths;
-
-struct RenderInfo
-{
-	GLuint program;
-} renderInfo;
 
 // For debugging.
 int printAll = 1;
@@ -856,19 +856,6 @@ uint32_t CreateDepthTexture(uint32_t colorTexture)
 	return depthTexture;
 }
 
-uint32_t GetDepthTextureFromColorTexture( uint32_t tex )
-{
-	int i;
-	for( i = 0; i < numColorDepthPairs; i++ )
-	{
-		if( colorDepthPairs[i*2] == tex )
-			return colorDepthPairs[i*2+1];
-	}
-	colorDepthPairs = realloc( colorDepthPairs, (numColorDepthPairs+1)*2*sizeof(uint32_t) );
-	colorDepthPairs[numColorDepthPairs*2+0] = tex;
-	return colorDepthPairs[numColorDepthPairs*2+1] = CreateDepthTexture( tex );
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static void InitPoseMat(float* result, const XrPosef * pose)
@@ -1021,132 +1008,96 @@ int RenderLayer(XrInstance instance, XrSession session, XrViewConfigurationView 
 				 XrSwapchainImageOpenGLKHR ** swapchainImages, uint32_t * swapchainLengths,
 				 GLuint * colorToDepthMap, GLuint frameBuffer,
 				 XrTime predictedDisplayTime,
-				 XrCompositionLayerProjection * layer)
+				 XrCompositionLayerProjectionView * projectionLayerViews,
+				 XrCompositionLayerProjection * layer, uint32_t viewCountOutput, XrView * views)
 {
-	XrViewState viewState;
-	viewState.type = XR_TYPE_VIEW_STATE;
-	viewState.next = NULL;
+	XrResult result;
 
-	uint32_t viewCapacityInput = viewConfigsCount;
-	uint32_t viewCountOutput;
-
-	XrView views[viewConfigsCount];
-	for (size_t i = 0; i < viewConfigsCount; i++)
-	{
-		views[i].type = XR_TYPE_VIEW;
-		views[i].next = NULL;
-	}
-
-	XrViewLocateInfo vli;
-	vli.type = XR_TYPE_VIEW_LOCATE_INFO;
-	vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-	vli.displayTime = predictedDisplayTime;
-	vli.space = stageSpace;
-	XrResult result = xrLocateViews( session, &vli, &viewState, viewCapacityInput, &viewCountOutput, views );
-	if (!CheckResult(instance, result, "xrLocateViews"))
-	{
-		return 0;
-	}
-	
-	XrCompositionLayerProjectionView projectionLayerViews[viewCountOutput];
 	memset( projectionLayerViews, 0, sizeof( XrCompositionLayerProjectionView ) * viewCountOutput );
 
-	for (uint32_t i = 0; i < viewConfigsCount; i++)
-		for (uint32_t j = 0; j < swapchainLengths[i]; j++)
+	// Render view to the appropriate part of the swapchain image.
+	for (uint32_t i = 0; i < viewCountOutput; i++)
+	{
+		// Each view has a separate swapchain which is acquired, rendered to, and released.
+		const struct SwapchainInfo * viewSwapchain = swapchains + i;
+
+		XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+		uint32_t swapchainImageIndex;
+		result = xrAcquireSwapchainImage(viewSwapchain->handle, &ai, &swapchainImageIndex);
+		if (!CheckResult(instance, result, "xrAquireSwapchainImage"))
 		{
-			const XrSwapchainImageOpenGLKHR * swapchainImage = &swapchainImages[i][j];
-			// ??? Need to do this?
+			return 0;
 		}
 
-	if (XR_UNQUALIFIED_SUCCESS(result))
-	{
-		// Render view to the appropriate part of the swapchain image.
-		for (uint32_t i = 0; i < viewCountOutput; i++)
+		XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+		wi.timeout = XR_INFINITE_DURATION;
+		result = xrWaitSwapchainImage(viewSwapchain->handle, &wi);
+		if (!CheckResult(instance, result, "xrWaitSwapchainImage"))
 		{
-			// Each view has a separate swapchain which is acquired, rendered to, and released.
-			const struct SwapchainInfo * viewSwapchain = swapchains + i;
+			return 0;
+		}
+		
+		XrCompositionLayerProjectionView * layerView = projectionLayerViews + i;
 
-			XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
-			uint32_t swapchainImageIndex;
-			result = xrAcquireSwapchainImage(viewSwapchain->handle, &ai, &swapchainImageIndex);
-			if (!CheckResult(instance, result, "xrAquireSwapchainImage"))
-			{
-				return 0;
-			}
+		layerView->type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+		layerView->pose = views[i].pose;
+		layerView->fov = views[i].fov;
+		layerView->subImage.swapchain = viewSwapchain->handle;
+		layerView->subImage.imageRect.offset.x = 0;
+		layerView->subImage.imageRect.offset.y = 0;
+		layerView->subImage.imageRect.extent.width = viewSwapchain->width;
+		layerView->subImage.imageRect.extent.height = viewSwapchain->height;
 
-			XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
-			wi.timeout = XR_INFINITE_DURATION;
-			result = xrWaitSwapchainImage(viewSwapchain->handle, &wi);
-			if (!CheckResult(instance, result, "xrWaitSwapchainImage"))
-			{
-				return 0;
-			}
-			
-			XrCompositionLayerProjectionView * layerView = projectionLayerViews + i;
+		const XrSwapchainImageOpenGLKHR * swapchainImage = &swapchainImages[i][swapchainImageIndex];
 
-			layerView->type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-			layerView->pose = views[i].pose;
-			layerView->fov = views[i].fov;
-			layerView->subImage.swapchain = viewSwapchain->handle;
-			layerView->subImage.imageRect.offset.x = 0;
-			layerView->subImage.imageRect.offset.y = 0;
-			layerView->subImage.imageRect.extent.width = viewSwapchain->width;
-			layerView->subImage.imageRect.extent.height = viewSwapchain->height;
+		uint32_t colorTexture = swapchainImage->image;
 
-			const XrSwapchainImageOpenGLKHR * swapchainImage = &swapchainImages[i][swapchainImageIndex];
+		minXRglBindFramebuffer( GL_FRAMEBUFFER, frameBuffer );
 
-			uint32_t colorTexture = swapchainImage->image;
-			uint32_t depthTexture = GetDepthTextureFromColorTexture( colorTexture );
+		glViewport(layerView->subImage.imageRect.offset.x,
+				   layerView->subImage.imageRect.offset.y,
+				   layerView->subImage.imageRect.extent.width,
+				   layerView->subImage.imageRect.extent.height);
 
-			minXRglBindFramebuffer( GL_FRAMEBUFFER, frameBuffer );
+		minXRglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
 
-			glViewport(layerView->subImage.imageRect.offset.x,
-					   layerView->subImage.imageRect.offset.y,
-					   layerView->subImage.imageRect.extent.width,
-					   layerView->subImage.imageRect.extent.height);
+		glClearColor(0.0f, 0.1f, 0.0f, 1.0f);
+		glClearDepth(1.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
-			minXRglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
-			minXRglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTexture, 0);
+		// Render Pipeline copied from https://github.com/hyperlogic/openxrstub/blob/main/src/main.cpp
 
-			glClearColor(0.0f, 0.1f, 0.0f, 1.0f);
-			glClearDepth(1.0f);
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+		// convert XrFovf into an OpenGL projection matrix.
+		const float tanLeft = tan(layerView->fov.angleLeft);
+		const float tanRight = tan(layerView->fov.angleRight);
+		const float tanDown = tan(layerView->fov.angleDown);
+		const float tanUp = tan(layerView->fov.angleUp);
+		const float nearZ = 0.05f;
+		const float farZ = 100.0f;
+		float projMat[16];
+		InitProjectionMat(projMat, GRAPHICS_OPENGL, tanLeft, tanRight, tanUp, tanDown, nearZ, farZ);
 
-			// Render Pipeline copied from https://github.com/hyperlogic/openxrstub/blob/main/src/main.cpp
+		// compute view matrix by inverting the pose
+		float invViewMat[16];
+		InitPoseMat(invViewMat, &layerView->pose);
+		float viewMat[16];
+		InvertOrthogonalMat(viewMat, invViewMat);
 
-			// convert XrFovf into an OpenGL projection matrix.
-			const float tanLeft = tan(layerView->fov.angleLeft);
-			const float tanRight = tan(layerView->fov.angleRight);
-			const float tanDown = tan(layerView->fov.angleDown);
-			const float tanUp = tan(layerView->fov.angleUp);
-			const float nearZ = 0.05f;
-			const float farZ = 100.0f;
-			float projMat[16];
-			InitProjectionMat(projMat, GRAPHICS_OPENGL, tanLeft, tanRight, tanUp, tanDown, nearZ, farZ);
+		float modelViewProjMat[16];
+		MultiplyMat(modelViewProjMat, projMat, viewMat);
 
-			// compute view matrix by inverting the pose
-			float invViewMat[16];
-			InitPoseMat(invViewMat, &layerView->pose);
-			float viewMat[16];
-			InvertOrthogonalMat(viewMat, invViewMat);
+		//glUseProgram(renderInfo.program);
+		//glUniformMatrix4fv(programInfo.modelViewProjMatUniformLoc, 1, GL_FALSE, modelViewProjMat);
+		//float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+		//glUniform4fv(programInfo.colorUniformLoc, 1, green);
 
-			float modelViewProjMat[16];
-			MultiplyMat(modelViewProjMat, projMat, viewMat);
+		minXRglBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-			glUseProgram(programInfo.program);
-			glUniformMatrix4fv(programInfo.modelViewProjMatUniformLoc, 1, GL_FALSE, modelViewProjMat);
-			float green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
-			glUniform4fv(programInfo.colorUniformLoc, 1, green);
-
-
-			minXRglBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-			XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-			result = xrReleaseSwapchainImage( viewSwapchain->handle, &ri );
-			if (!CheckResult(instance, result, "xrReleaseSwapchainImage"))
-			{
-				return 0;
-			}
+		XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+		result = xrReleaseSwapchainImage( viewSwapchain->handle, &ri );
+		if (!CheckResult(instance, result, "xrReleaseSwapchainImage"))
+		{
+			return 0;
 		}
 
 		layer->viewCount = viewCountOutput;
@@ -1186,11 +1137,37 @@ int RenderFrame(XrInstance instance, XrSession session, XrViewConfigurationView 
 
 	int layerCount = 0;
 	XrCompositionLayerProjection layer;
-	XrCompositionLayerBaseHeader * layers[1] = { &layer };
+	const XrCompositionLayerBaseHeader * layers[1] = { (XrCompositionLayerBaseHeader *)&layer };
 	layer.layerFlags = 0; //XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
 	layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
 	layer.next = NULL;
 	layer.space = stageSpace;
+
+
+	XrView views[viewConfigsCount];
+	for (size_t i = 0; i < viewConfigsCount; i++)
+	{
+		views[i].type = XR_TYPE_VIEW;
+		views[i].next = NULL;
+	}
+	
+	uint32_t viewCountOutput;
+	XrViewState viewState;
+	viewState.type = XR_TYPE_VIEW_STATE;
+	viewState.next = NULL;
+
+	XrViewLocateInfo vli;
+	vli.type = XR_TYPE_VIEW_LOCATE_INFO;
+	vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	vli.displayTime = fs.predictedDisplayTime;
+	vli.space = stageSpace;
+	result = xrLocateViews( session, &vli, &viewState, viewConfigsCount, &viewCountOutput, views );
+	if (!CheckResult(instance, result, "xrLocateViews"))
+	{
+		return 0;
+	}
+
+	XrCompositionLayerProjectionView projectionLayerViews[viewCountOutput];
 
 	if (fs.shouldRender == XR_TRUE)
 	{
@@ -1200,7 +1177,7 @@ int RenderFrame(XrInstance instance, XrSession session, XrViewConfigurationView 
 						swapchainImages,
 						swapchainLengths,
 						colorToDepthMap,
-						frameBuffer, fs.predictedDisplayTime, &layer))
+						frameBuffer, fs.predictedDisplayTime, projectionLayerViews, &layer, viewCountOutput, views))
 		{
 			layerCount++;
 		}
@@ -1236,18 +1213,6 @@ int main()
 
 	CNFGSetup( "Example App", 1024, 768 );
 	EnumOpenGLExtensions();
-	
-	renderInfo.program = CNFGGLInternalLoadShader( 
-		"uniform vec4 xfrm;"
-		"attribute vec3 a0;"
-		"attribute vec4 a1;"
-		"varying vec4 vc;"
-		"void main() { gl_Position = vec4( a0.xy*xfrm.xy+xfrm.zw, a0.z, 0.5 ); vc = a1; }",
-
-		"varying vec4 vc;"
-		"void main() { gl_FragColor = vec4(vc.rgba); }" 
-		 );
-
 
 	if ( !CreateSession(instance, systemId, &session ) ) return -1;
 	if ( !CreateActions(instance, systemId, session, &actionSet ) ) return -1;

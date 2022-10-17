@@ -6,3 +6,4 @@ Tested working on Windows + SteamVR, but should work elsewhere, since it's based
 
 But, it is pure C, compiles with TCC, or GCC in Windows.  And is very minimal (no reliance on SDL or anything like that).
 
+NOTE: this may not be well maintained, I recommend trying to use https://github.com/cnlohr/tsopenxr
